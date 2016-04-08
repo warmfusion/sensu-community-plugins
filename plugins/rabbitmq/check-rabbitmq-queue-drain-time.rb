@@ -80,6 +80,11 @@ class CheckRabbitMQQueueDrainTime < Sensu::Plugin::Check::CLI
          description: 'CRITICAL time that messages will process at current rate',
          default: 360
 
+  option :missing_ok,
+        long: '--missingok',
+        description: 'Allow queues to be missing',
+        default: false
+
   def acquire_rabbitmq_queues
     begin
       rabbitmq_info = CarrotTop.new(
@@ -132,10 +137,17 @@ class CheckRabbitMQQueueDrainTime < Sensu::Plugin::Check::CLI
     elsif !warn_queues.empty?
       warning "Drain time: #{warn_queues.map { |q, c| "#{q} #{c} sec" }.join(', ')}"
     else
-      if acquire_rabbitmq_queues.count == 1
-        ok "#{acquire_rabbitmq_queues[0]['name']} will be drained in under #{config[:warn].to_i} seconds"
-      else
-        ok "All (#{acquire_rabbitmq_queues.count}) queues will be drained in under #{config[:warn].to_i} seconds"
+      case acquire_rabbitmq_queues.count
+        when 0
+          if config[:missing_ok]
+            ok "No Queues found and --missingok set"
+          else
+            warning "No Queues found"
+          end
+        when 1
+          ok "#{acquire_rabbitmq_queues[0]['name']} will be drained in under #{config[:warn].to_i} seconds"
+        else
+          ok "All (#{acquire_rabbitmq_queues.count}) queues will be drained in under #{config[:warn].to_i} seconds"
       end
     end
   end
