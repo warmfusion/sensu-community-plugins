@@ -43,6 +43,11 @@ class CheckRabbitMQQueueDrainTime < Sensu::Plugin::Check::CLI
          proc: proc(&:to_i),
          default: 15_672
 
+  option :vhost,
+         description: 'Regular expression for filtering the RabbitMQ vhost',
+         short: '-v',
+         long: '--vhost VHOST'
+
   option :user,
          description: 'RabbitMQ management API user',
          long: '--user USER',
@@ -87,23 +92,27 @@ class CheckRabbitMQQueueDrainTime < Sensu::Plugin::Check::CLI
     rescue
       warning 'could not get rabbitmq queue info'
     end
-    rabbitmq_info.queues
+
+
+    rmq_queues = rabbitmq_info.queues
+    rmq_queues.select! { |x| x['vhost'].match(config[:vhost]) } if config[:vhost]
+    rmq_queues.select! { |x| x['name'].match(config[:filter]) } if config[:filter]
+
+    return rmq_queues
+
   end
 
   def run
     warn_queues = {}
     crit_queues = {}
     acquire_rabbitmq_queues.each do |queue|
-      if config[:filter]
-        next unless queue['name'].match(config[:filter])
-      end
 
       # we don't care about empty queues and they'll have an infinite drain time so skip them
-      next if queue['messages'] == 0
+      next if queue['messages'] == 0 || queue['messages'].nil?
 
       # handle rate of zero which is an infinite time until empty
       if queue['backing_queue_status']['avg_egress_rate'].to_f == 0
-        crit_queues[queue['name']]  = 'Infinite (drain rate = 0)'
+        crit_queues[queue['name']] = 'Infinite (drain rate = 0)'
         next
       end
 
@@ -123,7 +132,11 @@ class CheckRabbitMQQueueDrainTime < Sensu::Plugin::Check::CLI
     elsif !warn_queues.empty?
       warning "Drain time: #{warn_queues.map { |q, c| "#{q} #{c} sec" }.join(', ')}"
     else
-      ok "All (#{acquire_rabbitmq_queues.count}) queues will be drained in under #{config[:warn].to_i} seconds"
+      if acquire_rabbitmq_queues.count == 1
+        ok "#{acquire_rabbitmq_queues[0]['name']} will be drained in under #{config[:warn].to_i} seconds"
+      else
+        ok "All (#{acquire_rabbitmq_queues.count}) queues will be drained in under #{config[:warn].to_i} seconds"
+      end
     end
   end
 end
